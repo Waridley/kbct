@@ -7,9 +7,9 @@ extern crate pretty_env_logger;
 extern crate uinput;
 extern crate uinput_sys;
 
-use std::{fs, fs::File, process, thread, time};
 use std::collections::{HashMap, HashSet};
 use std::os::unix::io::{AsRawFd, RawFd};
+use std::{fs, fs::File, process, thread, time};
 
 use clap::Clap;
 use inotify::Inotify;
@@ -41,7 +41,7 @@ impl SignalReceiver {
 			&mask,
 			nix::sys::signalfd::SfdFlags::SFD_NONBLOCK,
 		)
-			.unwrap();
+		.unwrap();
 		let fd = sfd.as_raw_fd();
 		Ok(Box::new(SignalReceiver {
 			signal_fd: (sfd),
@@ -139,8 +139,11 @@ impl DeviceManager {
 	fn update_captured_kbs(&mut self) -> Result<Vec<Box<dyn EventObserver>>> {
 		let available_kb_names = util::get_all_uinput_device_names_to_paths()?;
 
-		let available_kb_paths: HashMap<&String, &String> =
-			available_kb_names.iter().map(|x| (x.1, x.0)).collect();
+		let available_kb_paths: HashMap<&String, &String> = available_kb_names
+			.iter()
+			.flat_map(|x| std::iter::repeat(x.0).zip(x.1))
+			.map(|x| (x.1, x.0))
+			.collect();
 
 		self.captured_kb_paths.retain(|x| {
 			if available_kb_paths.contains_key(x) {
@@ -155,30 +158,32 @@ impl DeviceManager {
 
 		for conf in self.conf.iter() {
 			for kb_name in conf.keyboards() {
-				if let Some(kb_path) = available_kb_names.get(kb_name) {
-					if !self.captured_kb_paths.contains(kb_path) {
-						let kb_new_name = format!("{}-{}", "Kbct", kb_name);
-						let file = util::open_readable_uinput_device(kb_path, true)?;
-						let raw_fd = file.as_raw_fd();
-						let device = util::create_writable_uinput_device(&kb_new_name)?;
-						let raw_buffer: util::KeyBuffer = [0; util::BUF_SIZE];
-						let kbct = Kbct::new(conf.clone(), util::linux_keyname_mapper)?;
+				if let Some(kb_paths) = available_kb_names.get(kb_name) {
+					for kb_path in kb_paths {
+						if !self.captured_kb_paths.contains(kb_path) {
+							let kb_new_name = format!("{}-{}", "Kbct", kb_name);
+							let file = util::open_readable_uinput_device(kb_path, true)?;
+							let raw_fd = file.as_raw_fd();
+							let device = util::create_writable_uinput_device(&kb_new_name)?;
+							let raw_buffer: util::KeyBuffer = [0; util::BUF_SIZE];
+							let kbct = Kbct::new(conf.clone(), util::linux_keyname_mapper)?;
 
-						let mapper = Box::new(KeyboardMapper {
-							file,
-							device,
-							raw_buffer,
-							kbct,
-							raw_fd,
-						});
+							let mapper = Box::new(KeyboardMapper {
+								file,
+								device,
+								raw_buffer,
+								kbct,
+								raw_fd,
+							});
 
-						ans.push(mapper);
-						self.captured_kb_paths.insert(kb_path.clone());
+							ans.push(mapper);
+							self.captured_kb_paths.insert(kb_path.clone());
 
-						info!(
-							"Capturing device path={} name={:?} mapped_name={:?}",
-							kb_path, kb_name, kb_new_name
-						)
+							info!(
+								"Capturing device path={} name={:?} mapped_name={:?}",
+								kb_path, kb_name, kb_new_name
+							)
+						}
 					}
 				}
 			}
@@ -203,7 +208,7 @@ impl EventObserver for DeviceManager {
 				regex.is_match(event.name.unwrap().to_str().unwrap())
 					&& !event.mask.contains(EventMask::ISDIR)
 					&& (event.mask.contains(EventMask::CREATE)
-					|| event.mask.contains(EventMask::DELETE))
+						|| event.mask.contains(EventMask::DELETE))
 			})
 			.is_some();
 
@@ -252,7 +257,7 @@ impl EventObserver for KeyLogger {
 							util::keycodes::code_to_name(kbct_event.code),
 							kbct_event.ev_type
 						)
-							.to_lowercase()
+						.to_lowercase()
 					)
 				}
 			}
@@ -270,8 +275,9 @@ impl EventObserver for KeyLogger {
 fn start_mapper_from_file_conf(config_file: String) -> Result<()> {
 	let config = serde_yaml::from_str(
 		&*std::fs::read_to_string(config_file.as_str())
-			.expect(&format!("Could not open file {}", config_file)))
-		.expect("Could not parse the configuration yaml file");
+			.expect(&format!("Could not open file {}", config_file)),
+	)
+	.expect("Could not parse the configuration yaml file");
 	start_mapper(config)
 }
 
@@ -290,8 +296,10 @@ fn start_mapper(config: KbctRootConf) -> Result<()> {
 }
 
 fn show_device_names() -> Result<()> {
-	for (name, path) in util::get_all_uinput_device_names_to_paths()? {
-		println!("{}\t{:?}", path, name)
+	for (name, paths) in util::get_all_uinput_device_names_to_paths()? {
+		for path in paths {
+			println!("{}\t{:?}", path, &name)
+		}
 	}
 	Ok(())
 }
@@ -330,8 +338,8 @@ enum SubCommand {
 struct CliTestReplay {
 	#[clap(short, long)]
 	testcase: String,
-	#[clap(short, long, default_value="DummyDevice")]
-	device_name: String
+	#[clap(short, long, default_value = "DummyDevice")]
+	device_name: String,
 }
 
 #[derive(Clap)]

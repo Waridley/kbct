@@ -71,7 +71,6 @@ impl KbctConf {
 	}
 }
 
-
 #[derive(Debug)]
 struct KbctKeyState {
 	time: u64,
